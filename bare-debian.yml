@@ -1,0 +1,81 @@
+- sh: parted /dev/vda mktable msdos
+- sh: parted -a optimal /dev/vda mkpart primary ext3 2048s '100%'
+- sh: mkfs.ext4 -L vm_root /dev/vda1
+- sh: mount -t ext4 /dev/vda1 /mnt
+- sh: debootstrap --arch amd64 buster /mnt https://deb.debian.org/debian/
+
+- sh: mount -t proc /proc /mnt/proc/
+- sh: mount -t sysfs /sys /mnt/sys/
+- sh: mount -o bind /dev /mnt/dev/
+- sh: mount -o bind /dev/pts /mnt/dev/pts
+
+- chroot: /mnt
+
+- file:
+    path: /etc/fstab
+    content: |
+      /dev/vda1 / ext4 defaults 1 1
+
+- file:
+    path: /etc/apt/sources.list
+    content: |
+      deb https://deb.debian.org/debian buster main contrib non-free
+      deb-src https://deb.debian.org/debian buster main contrib non-free
+
+      deb https://deb.debian.org/debian buster-updates main contrib non-free
+      deb-src https://deb.debian.org/debian buster-updates main contrib non-free
+
+      deb http://security.debian.org/ buster/updates main contrib non-free
+      deb-src http://security.debian.org/ buster/updates main contrib non-free
+
+- sh: ln -fs /usr/share/zoneinfo/Europe/Berlin /etc/localtime
+- sh: dpkg-reconfigure -f noninteractive tzdata
+
+- sh: apt-get update
+- apt: sysvinit-core systemd-
+- apt: linux-image-cloud-amd64 initramfs-tools
+- apt: grub2
+
+# enable serial console for grub, kernel and getty (be aware that init's messages are only visible on the last declared kernel-console)
+#- sh: sed -i 's/GRUB_CMDLINE_LINUX_DEFAULT="quiet"/GRUB_CMDLINE_LINUX_DEFAULT="console=tty0 console=ttyS0,115200"/' /etc/default/grub
+#- sh: sed -i 's/#GRUB_TERMINAL=console/GRUB_TERMINAL="serial console"\nGRUB_SERIAL_COMMAND="serial --speed=115200 --unit=0 --word=8 --parity=no --stop=1"/' /etc/default/grub
+#- sh: echo 'S01:23:respawn:/sbin/getty -L ttyS0 115200 vt100' >>/etc/inittab
+
+- sh: update-grub
+- sh: grub-install /dev/vda
+
+- file:
+    path: /etc/network/interfaces
+    content: |
+      auto lo
+      iface lo inet loopback
+
+      auto eth0
+      iface eth0 inet dhcp
+- sh: echo "net.ipv6.conf.all.disable_ipv6 = 1" >> /etc/sysctl.conf # no IPv6, no forgotten firewall-rules 
+- sh: mkdir -p /etc/systemd/network
+- sh: ln -s /dev/null /etc/systemd/network/99-default.link
+- sh: update-initramfs -u
+
+- sh: echo 'root:none' | chpasswd
+
+- file:
+    path: /etc/hostname
+    content: |
+      bare-debian
+
+# stolen from Ubuntu, makes it possible to get the time of the last successfull run of apt-get update
+- file:
+    path: /etc/apt/apt.conf.d/15update-stamp
+    content: |
+      APT::Update::Post-Invoke-Success {"touch /var/lib/apt/periodic/update-success-stamp 2>/dev/null || true";};
+
+- sh: apt-get update
+- sh: apt-get -y upgrade
+- sh: apt-get install -y wget acpid
+- sh: apt-get clean
+
+- sh: wget -O /usr/local/bin/qemu-init http://10.0.2.10/assets/qemu-init # http://192.168.178.48:8000/qemu-init/qemu-init
+- sh: chmod +x /usr/local/bin/qemu-init
+- sh: sed -i 's#^exit 0$#(/usr/local/bin/qemu-init 2>\&1 \&\& reboot) | tee -a /var/log/qemu-init.log\n&#' /etc/rc.local
+
